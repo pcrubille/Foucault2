@@ -14,6 +14,20 @@
 
 int Vignette_Size = 240;
 
+void Circle::three_point_circle( double p1_x, double p1_y,
+			  double p2_x, double p2_y,
+			  double p3_x, double p3_y )
+{
+  double A, B, C, D;
+	    
+  A = p1_x - p2_x; B = p2_x - p3_x; C = p1_y - p2_y, D = p2_y - p3_y;
+  // compute bisectrice intersection
+  X = A*D*(p1_x+p2_x) - B*C*(p2_x+p3_x) + C*D*(p1_y+p2_y) - C*D*(p2_y+p3_y);
+  X = X / (2.*(A*D-B*C));
+  Y = B*(p2_x+p3_x) +D*(p2_y+p3_y) -2.*B*X;
+  Y = Y /(2.*D);
+  Radius = sqrt( pow(X- p1_x , 2 ) + pow( Y- p1_y ,2) );
+}
 
 void FoucaultSnapshot::draw_image( )
 {
@@ -304,25 +318,37 @@ bool UnmaskedFoucaultImgSet::set_image( int i, QString name)
 	      } else
 	    */
 	      {
-	      foucault_img[i].min_pixel = 256; foucault_img[i].max_pixel = 0; 
-	      for (int y = 0; y < ImgIn.height(); ++y) {
-		for (int x = 0; x < ImgIn.width(); ++x) {
-		  int pixvalue = ChannelPixel( ImgIn.pixel(x, y));
-		  GrayImg.setPixel(x, y, QColor(pixvalue, pixvalue, pixvalue).rgb());
-		  if( pixvalue < foucault_img[i].min_pixel )
-		    foucault_img[i].min_pixel = pixvalue ;
-		  if( pixvalue > foucault_img[i].max_pixel )
-		    foucault_img[i].max_pixel = pixvalue ;
-		  
+		int min_pixel = 256; int max_pixel = 0; 
+		for (int y = 0; y < ImgIn.height(); ++y) {
+		  for (int x = 0; x < ImgIn.width(); ++x) {
+		    int pixvalue = ChannelPixel( ImgIn.pixel(x, y));
+		    //		  GrayImg.setPixel(x, y, QColor(pixvalue, pixvalue, pixvalue).rgb());
+		    if( pixvalue < min_pixel )
+		      min_pixel = pixvalue ;
+		    if( pixvalue > max_pixel )
+		      max_pixel = pixvalue ;
+		    
+		  }
 		}
+		if( min_pixel == max_pixel ) { if( min_pixel > 0 ) min_pixel = min_pixel-1; else max_pixel = 1;}
+		// Normalize images (add 25-05-2025
+		for (int y = 0; y < ImgIn.height(); ++y) {
+		  for (int x = 0; x < ImgIn.width(); ++x) {
+		    int pixvalue = ChannelPixel( ImgIn.pixel(x, y));
+		    pixvalue = (pixvalue - min_pixel)*256; pixvalue= pixvalue/(max_pixel-min_pixel);
+		    if( pixvalue>255 ) pixvalue = 255;
+		    GrayImg.setPixel(x, y, QColor(pixvalue, pixvalue, pixvalue).rgb());
+		  }
+		}
+		foucault_img[i].min_pixel = 0; foucault_img[i].max_pixel = 256; 
+		
+		foucault_img[i].raw_image = GrayImg; 
 	      }
-	    }
-	    foucault_img[i].raw_image = GrayImg; 
+	      foucault_img[i].draw_image( );
+	      return true;
 	  }
-	foucault_img[i].draw_image( );
-	return true;
+	return false;
       }
-    return false;
   }
 
 bool   FoucaultSnapshot::clear()
@@ -357,7 +383,7 @@ bool UnmaskedFoucaultImgSet::clear_image( int i )
 //
 // FIND CENTER is the main part:
 // we use a specialised edge detection that is detection of the edge of a
-// foucault image: the background is very dark, the left edge is very bright
+// foucault image: the background is very dark, the edge is very bright
 // and it is at least half a circle.
 // it should be very accurate so:
 // 1 - detect the top and bottom edges.
@@ -368,29 +394,31 @@ bool UnmaskedFoucaultImgSet::clear_image( int i )
 //   - compute the center and radius of the circle getting one point from each of theses parts
 //   - forget the (center, radius) with smmaller min, max x, y and radius.
 //   - average (x, y, radius).
-class Circle
-{
-private:
-  double X, Y, Radius ;
-public:
-  double x(){return X;} double y(){return Y;} double radius(){return Radius;}
-  void three_point_circle( double p1_x, double p1_y,
-			  double p2_x, double p2_y,
-			  double p3_x, double p3_y )
-  {
-	  double A, B, C, D;
-	    
-	  A = p1_x - p2_x; B = p2_x - p3_x; C = p1_y - p2_y, D = p2_y - p3_y;
-	  // compute bisectrice intersection
-	  X = A*D*(p1_x+p2_x) - B*C*(p2_x+p3_x) + C*D*(p1_y+p2_y) - C*D*(p2_y+p3_y);
-	  X = X / (2.*(A*D-B*C));
-	  Y = B*(p2_x+p3_x) +D*(p2_y+p3_y) -2.*B*X;
-	  Y = Y /(2.*D);
-	  Radius = sqrt( pow(X- p1_x , 2 ) + pow( Y- p1_y ,2) );
-  }
-};
-bool comp_radius( Circle c1, Circle c2 ){ return c1.radius() < c2.radius() ;}
+
+bool comp_radius( Circle c1, Circle c2 ){ return c1.radius()  < c2.radius() ;}
 bool comp_x( Circle c1, Circle c2 ){ return c1.x() < c2.x() ;}
+bool comp_y( Circle c1, Circle c2 ){ return c1.y() < c2.y() ;}
+
+bool FoucaultSnapshot::check_circle( Circle* circle )
+{
+  //  int max_pixel = 64;
+  if( circle->x()+circle->radius() >= cropped.width() -5 ) return false;
+  if( circle->x()-circle->radius() <= 5 ) return false;
+  if( circle->radius() > (cropped.height()*3)/2 ) return false;
+  for( double angle = -PI/9.; angle < 4.*PI/10. ; angle=angle+PI/20.) // avoid mirror supports
+  {
+    int x,y;
+    x = cos( angle )*circle->radius() ;
+    y = sin( angle )*circle->radius() + circle->y() ;
+    if( qGray( cropped.pixel( circle->x() +x +5 , y ) )
+	>= qGray( cropped.pixel( circle->x() +x , y)) ) return false;
+    if( qGray( cropped.pixel( circle->x() -x -5 , y ) )
+	>= qGray( cropped.pixel( circle->x() -x , y))) return false;
+
+  }
+
+  return true;
+}
 
 bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
 {
@@ -415,11 +443,12 @@ bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
 
       ////////////////////////////////////////////////////////////////
       // <begin> find lower edge (starting from y=0 to
-      y = 2; // as find_edge( *, *, -1 ) look at pixel from y-2 and y+2
-      while( find_edge_y_zero( y, 0, 1 ) <=0 ) // search black to white from bottom.
+      y = 5; // as find_edge( *, *, -1 ) look at pixel from y-2 and y+2
+      //      while( find_edge_y_zero( y, 0, 1, 10, cropped.width()-10 ) <=0 ) // search black to white from bottom.
+      while( find_edge_y( y, 2, 2, 10, cropped.width()-10 ) <=0 ) // search black to white from bottom.
 	{
 	  y = y+ Y_step;
-	  if( y >= img_height-3 )
+	  if( y >= 0.8*img_height )
 	    {
 	     cropped = nullqimage;
 	     return false; // no foucault mirror image
@@ -428,9 +457,10 @@ bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
       if( y < Y_step +2 ) { y = 2;}
       else { y = y - Y_step ;
 	  } // restart edge search but for all x
-      while( (x_lower_edge = find_edge_y_zero( y, 0, 1 )) <=0 ) // search black to white from bottom.
+      //      while( (x_lower_edge = find_edge_y_zero( y, 0, 1, 10, cropped.width()-10 )) <=0 ) // search black to white from bottom.
+      while( (x_lower_edge = find_edge_y( y, 2, 2, 10, cropped.width()-10 )) <=0 ) // search black to white from bottom.
 	{
-	  if( y >= img_height-3 )
+	  if( y >= 0.8*img_height )
 	    {
 	      cropped = nullqimage;
 	      return false; // should not happend
@@ -443,20 +473,22 @@ bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
 
       ////////////////////////////////////////////////////////////////
       // <begin> find upper edge (starting from y=img_height-2 to
-      y = img_height-3; // as find_edge( *, *, -1 ) look at pixel from y-2 and y+2
-      while( find_edge_y_zero( y, 0, -1 ) <=0 ) // search black to white from bottom.
+      y = img_height-5; // as find_edge( *, *, -1 ) look at pixel from y-2 and y+2
+      //      while( find_edge_y_zero( y, 0, -1, 10, cropped.width()-10 ) <=0 ) // search black to white from bottom.
+      while( find_edge_y( y, 2, -2, 10, cropped.width()-10 ) <=0 ) // search black to white from bottom.
 	{
 	  y = y- Y_step;
-	  if( y <= 2 )
+	  if( y <= y_lower_edge + 2 )
 	    {
 	      cropped = nullqimage;
 	      return false; // no foucault mirror image
 	    };
 	};
-      if( y > img_height -3 - Y_step ) { y = img_height - 3;}
+      if( y > img_height -5 - Y_step ) { y = img_height - 3;}
       else { y = y + Y_step ; 
 	  } // restart edge search but for all x.
-      while( (x_upper_edge = find_edge_y_zero( y, 0, -1 )) <=0 ) // search black to white from bottom.
+      //      while( (x_upper_edge = find_edge_y_zero( y, 0, -1 , 10, cropped.width()-10)) <=0 ) // search black to white from bottom.
+      while( (x_upper_edge = find_edge_y( y, 2, -2 , 10, cropped.width()-10)) <=0 ) // search black to white from bottom.
 	{
 	  if( y <= 2)
 	    {
@@ -475,30 +507,76 @@ bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
 		       + 2*pow(x_upper_edge - x_lower_edge, 2) )/2 ;
       // if one is top or buttom of the circle and the other one on the edge,
       // the magic formula is close enough to the radius!
-
-
+      printf( "r_circle %f \n", r_circle);
       ////////////////////////////////////////////////////////////////
       // Now,find ( (edge_low - hedge_ height)/step )/3 triple points on the circle
       int edge_60 = y_lower_edge - 2 + 2*r_circle/3;
       std::vector<Circle> vector_circle;
+      // from left to right
       for(int p_i_y = y_lower_edge; p_i_y < edge_60 ; p_i_y = p_i_y +Y_step )
 	{
 	  float p1_i_x, p2_i_x, p3_i_x;
 	  float p2_i_y = p_i_y + (2*r_circle)/3 ;
 	  float p3_i_y = p_i_y + (4*r_circle)/3 ;
-	  p1_i_x = find_edge_y( p_i_y , 1, 1 );
-	  p2_i_x = find_edge_y( p2_i_y , 1, 0 );
-	  p3_i_x = find_edge_y( p3_i_y , 1, -1 );
-	  // compute center of the 3 points circle
-	  if( ( p1_i_x > 0 ) && ( p2_i_x > 0 ) && ( p3_i_x > 0 ) )
+	  if( p3_i_y < cropped.height() -3 )
 	    {
-	      Circle circle_i;
-	      circle_i.three_point_circle( p1_i_x, p_i_y,      p2_i_x,  p2_i_y,      p3_i_x, p3_i_y );
-	      // then check result is close enough to first (but safe)  aproximation
-	      if( ( 0.9*r_circle < circle_i.radius() ) && (circle_i.radius() < r_circle*1.1))
-		vector_circle.push_back( circle_i );
+	      /*
+	      p1_i_x = find_edge_y( p_i_y , -1, -1, 10, cropped.width()-10 );
+	      p2_i_x = find_edge_y( p2_i_y , -1, 0, 10, cropped.width()-10 );
+	      p3_i_x = find_edge_y( p3_i_y , -1, 1, 10, cropped.width()-10 );
+*/
+	      p1_i_x = find_edge_y( p_i_y , 1, 1, 10, cropped.width()-10 );
+	      p2_i_x = find_edge_y( p2_i_y , 1, 0, 10, cropped.width()-10 );
+	      p3_i_x = find_edge_y( p3_i_y , 1, -1, 10, cropped.width()-10 );
+
+	      // compute center of the 3 points circle
+	      if( ( p1_i_x > 0 ) && ( p2_i_x > 0 ) && ( p3_i_x > 0 ) )
+		{
+		  Circle circle_i;
+		  circle_i.three_point_circle( p1_i_x, p_i_y,      p2_i_x,  p2_i_y,      p3_i_x, p3_i_y );
+		  // then check result is close enough to first (but safe)  aproximation
+		  //		  if( ( 0.7*r_circle < circle_i.radius() ) && (circle_i.radius() < r_circle*1.3))
+		  if( check_circle( &circle_i ) )
+		    {
+		      vector_circle.push_back( circle_i );
+		    }
+		}
 	    }
 	}
+      
+      // from right to left
+      for(int p_i_y = y_lower_edge; p_i_y < edge_60 ; p_i_y = p_i_y +Y_step )
+	{ 
+	  float p1_i_x, p2_i_x, p3_i_x;
+	  float p2_i_y = p_i_y + (2*r_circle)/3 ;
+	  float p3_i_y = p_i_y + (4*r_circle)/3 ;
+	  if( p3_i_y < cropped.height() -3 )
+	    {
+	      /*
+	      p1_i_x = find_edge_y( p_i_y , 1, -1, cropped.width()-10, 10 );
+	      p2_i_x = find_edge_y( p2_i_y , 1, 0, cropped.width()-10, 10 );
+	      p3_i_x = find_edge_y( p3_i_y , 1, 1, cropped.width()-10, 10 );
+	      */
+	      p1_i_x = find_edge_y( p_i_y , -1, 1, cropped.width()-10, 10 );
+	      p2_i_x = find_edge_y( p2_i_y , -1, 0, cropped.width()-10, 10 );
+	      p3_i_x = find_edge_y( p3_i_y , -1, -1, cropped.width()-10, 10 );
+
+	      // compute center of the 3 points circle
+	      if( ( p1_i_x > 0 ) && ( p2_i_x > 0 ) && ( p3_i_x > 0 ) )
+		{
+		  Circle circle_i;
+		  circle_i.three_point_circle( p1_i_x, p_i_y,      p2_i_x,  p2_i_y,      p3_i_x, p3_i_y );
+		  // then check result is close enough to first (but safe)  aproximation
+		  //		  if( ( 0.8*r_circle < circle_i.radius() ) && (circle_i.radius() < r_circle*1.3))
+		  if( check_circle( &circle_i ) )		    
+		    {
+		      vector_circle.push_back( circle_i );
+		    }
+		}
+	    }
+	}
+      
+      
       /*
       // filtering: forget smallest and largest values for radius, x and y 
       // then compute average.
@@ -507,26 +585,59 @@ bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
       */
       int nb_circle = (int)vector_circle.size();
       int nb_filtered = 0;
+      //      int centre_petit = nb_circle*3/16; int centre_grand= nb_circle*13/16;
       c_x_circle = 0; c_y_circle = 0; r_circle = 0; 
-      if( nb_circle <= 8 )
+      if( nb_circle <= 4 )
 	{
 	  cropped = nullqimage;
 	  return false ; // very poor image
 	};
-      std::sort( vector_circle.begin(), vector_circle.end(), comp_x );     
-      std::sort( vector_circle.begin() + nb_circle*4/16, vector_circle.begin() + nb_circle*14/16 , comp_radius );
-      for (std::vector<Circle>::iterator it=vector_circle.begin()+nb_circle*7/16;
-	   it!=vector_circle.begin()+nb_circle*12/16; ++it)
-	{
-	  nb_filtered++ ;
-	  c_x_circle += it->x();
-	  c_y_circle += it->y();
-	  r_circle += it->radius();
-	}
+
+      std::sort( vector_circle.begin() , vector_circle.end(), comp_radius );
+      {
+	int serie_first_index, serie_last_index;
+	serie_first_index = 0; serie_last_index = 0;
+	double serie_current_radius = 0; int serie_current_first_index = 0, serie_current_last_index =0;
+
+	for (std::vector<Circle>::iterator it=vector_circle.begin();
+	     it!=vector_circle.end(); ++it)
+	  {
+	    if( serie_current_radius +2. >= it->radius() )
+	      { // la série de rayon voisins continue.
+	      }
+	    else {
+	      serie_current_radius = it->radius();
+	      serie_current_first_index = serie_current_last_index ;
+	    }
+	    int current_serie_size = serie_current_last_index - serie_current_first_index;
+	    int serie_size = serie_last_index - serie_first_index;
+	    if( current_serie_size > serie_size )
+	      { // la nouvelle série de rayons voisin est plus grande - remplacer:
+		serie_first_index = serie_current_first_index;
+		serie_last_index = serie_current_last_index;
+	      };
+	    serie_current_radius = it->radius();
+	    serie_current_last_index ++;
+	      
+	  };
+	/*	for (std::vector<Circle>::iterator it=vector_circle.begin()+centre_petit+serie_first_index;
+	     it!=vector_circle.begin()+centre_petit+serie_last_index; ++it)
+	*/
+	int l_serie = serie_last_index - serie_first_index;
+	for (std::vector<Circle>::iterator it=vector_circle.begin()+serie_first_index+l_serie/4;
+	     it!=vector_circle.begin()+serie_last_index-l_serie/4; ++it)
+{
+	    
+	    nb_filtered++ ;
+	    c_x_circle += it->x();
+	    c_y_circle += it->y();
+	    r_circle += it->radius();
+	  }
+      }
       c_x_circle = c_x_circle / nb_filtered ;
       c_y_circle = c_y_circle / nb_filtered ;
       r_circle = r_circle / nb_filtered ;
-      
+
       cropped = cropped.copy( c_x_circle - r_circle, c_y_circle - r_circle, 2*r_circle, 2*r_circle );
       apply_flat( flat_img, c_x_circle - r_circle, c_y_circle - r_circle, 2*r_circle, 2*r_circle );
       cropped = cropped.convertToFormat( QImage::Format_Grayscale8 );
@@ -554,12 +665,14 @@ bool FoucaultSnapshot::find_center_3points(double angle, QImage flat_img)
     };
 }
 
-double FoucaultSnapshot::find_edge_y( int y, int x_diff, int y_diff )
+double FoucaultSnapshot::find_edge_y( int y, int x_diff, int y_diff , int begin_x, int end_x )
   {
     double edge_x = -1;
     double local_delta_value, edge_delta_value = 1;   
     double pixvalue, pixvalue_m, pixvalue_m2, pixvalue_p, sum_8_neighbours ;
-    for( int i=abs(2*x_diff)+10; i< ( cropped.width() -2 - abs(2*x_diff)  ); i++ )
+    int sens;
+    if( begin_x<end_x ) sens = 1; else sens = -1;
+    for( int i=begin_x; i != end_x ; i=i+sens )
       {
 	pixvalue = qGray( cropped.pixel(i, y) );
 	pixvalue_m = qGray( cropped.pixel(i - x_diff, y - y_diff ));
@@ -568,13 +681,6 @@ double FoucaultSnapshot::find_edge_y( int y, int x_diff, int y_diff )
 	local_delta_value = pixvalue - pixvalue_m ;
 
 	if( pixvalue_p > pixvalue )
-	  {
-	  if( (pixvalue_p - pixvalue_m) > 2*local_delta_value )
-	    local_delta_value = ( pixvalue_p - pixvalue_m)/2;
-	  if( (pixvalue_p - pixvalue_m2) > 3*local_delta_value )
-	    local_delta_value = ( pixvalue_p - pixvalue_m2)/3;
-	  }
-	if( local_delta_value >  edge_delta_value )
 	  {
 	    // check it is not a single bright point
 	    sum_8_neighbours =  qGray( cropped.pixel(i -1, y - 1 ))
@@ -585,22 +691,35 @@ double FoucaultSnapshot::find_edge_y( int y, int x_diff, int y_diff )
 	      + qGray( cropped.pixel( i+1 -1, y-1 ))
 	      + qGray( cropped.pixel( i+1, y ))
 	      + qGray( cropped.pixel( i+1, y+1 )) ;
-	    if( (sum_8_neighbours - 6*pixvalue_m) > 2*pixvalue )
+	    //	    if( (sum_8_neighbours - 6*pixvalue_m) > 2*pixvalue )
+	    if( (sum_8_neighbours ) > 4*pixvalue )
 	      {
-		edge_delta_value = local_delta_value ;
-		edge_x = i;
-		if( pixvalue >= (max_pixel - min_pixel )/2 ) return edge_x;
+		if( (pixvalue_p - pixvalue_m) > 2*local_delta_value )
+		  local_delta_value = ( pixvalue_p - pixvalue_m)/2;
+		if( (pixvalue_p - pixvalue_m2) > 3*local_delta_value )
+		  local_delta_value = ( pixvalue_p - pixvalue_m2)/3;
+		if( local_delta_value >  edge_delta_value )
+		  {
+		    edge_delta_value = local_delta_value ;
+		    edge_x = i;
+		    if( pixvalue >= (max_pixel - min_pixel )/8 )
+		      return edge_x;
+		  }
 	      }
 	  }
       }
-    return edge_x;
+    //    return edge_x;
+    return -1;
   }
 
+/*
 // the same goal but before we know there is the disk here
-double FoucaultSnapshot::find_edge_y_zero( int y, int x_diff, int y_diff )
+double FoucaultSnapshot::find_edge_y_zero( int y, int x_diff, int y_diff , int begin_x, int end_x )
   {
     double pixvalue, pixvalue_m1, pixvalue_m2, pixvalue_p1, pixvalue_p2 ;
-    for( int i=abs(2*x_diff)+10; i< ( cropped.width() -2 - abs(2*x_diff)  ); i++ )
+    int sens;
+    if( begin_x<end_x ) sens = 1; else sens = -1;
+    for( int i=begin_x; i != end_x ; i=i+sens )
       {
 	pixvalue = qGray( cropped.pixel(i, y) );
 	pixvalue_m1 = qGray( cropped.pixel(i - x_diff, y - y_diff ));
@@ -615,7 +734,8 @@ double FoucaultSnapshot::find_edge_y_zero( int y, int x_diff, int y_diff )
 		) // detect bevel edge
 	   ||
 	   (      // detect diffraction ridge
-	    ( pixvalue >= min_pixel + (max_pixel - min_pixel)*1./2. )
+	    //MODIF 2025 	    ( pixvalue >= min_pixel + (max_pixel - min_pixel)*1./2. )
+	    ( pixvalue >= min_pixel + (max_pixel - min_pixel)*1./3. )
 	    && ( pixvalue -4*k_edge > pixvalue_m1 ) && ( pixvalue -4*k_edge > pixvalue_m2 )
 	    ))
 	  {
@@ -624,6 +744,7 @@ double FoucaultSnapshot::find_edge_y_zero( int y, int x_diff, int y_diff )
       }
     return -1;
   }
+*/
 
 /////////////////////////////////////////////////////////////
 //           ALGO TO FIND THE ZONES:
@@ -635,12 +756,9 @@ bool FoucaultSnapshot::diff_180()
   if(( !cropped.isNull() ) || ( min_pixel >= max_pixel ))
     {
       QImage GrayImg( cropped.width(), cropped.height(), QImage::Format_Grayscale8);
-      double normalize = 1;
-      if( 255 > max_pixel  ) normalize = 255./max_pixel ;
       int H = cropped.height(); int W = cropped.width();
       for (int y = 0; y < H; ++y) {
 	for (int x = 0; x < W; ++x) {
-	  //	  double pixvalue = normalize * fabs( qGray( cropped.pixel(x, y) ) -
 	  double pixvalue = fabs( qGray( cropped.pixel(x, y) ) -
 		 qGray( cropped.pixel( W-x-1, H-y-1) ) );
 	  GrayImg.setPixel(x, y, QColor(pixvalue, pixvalue, pixvalue).rgb());

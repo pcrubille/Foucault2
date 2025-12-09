@@ -28,6 +28,17 @@ using namespace std;
 
 #define NB_step_in_IMG 400
 
+class Circle
+{
+private:
+  double X, Y, Radius ;
+public:
+  double x(){return X;} double y(){return Y;} double radius(){return Radius;}
+  void three_point_circle( double p1_x, double p1_y,
+			  double p2_x, double p2_y,
+			   double p3_x, double p3_y );
+};
+
 class FoucaultSnapshot
 {
 public:
@@ -44,9 +55,11 @@ private:
   double internal_zone_value, external_zone_value;
 
   double x_lower_edge, y_lower_edge, x_upper_edge, y_upper_edge;
-  double find_edge_y( int x, int x_diff, int y_diff );
+  double find_edge_y( int x, int x_diff, int y_diff, int begin_x, int end_x );
 // the same goal but before we know there is the disk here:
-  double find_edge_y_zero( int x, int x_diff, int y_diff );
+    double find_edge_y_zero( int x, int x_diff, int y_diff, int begin_x, int end_x );
+
+  bool check_circle( Circle *circle );
   
 public:
   FoucaultSnapshot();
